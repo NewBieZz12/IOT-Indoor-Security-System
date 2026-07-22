@@ -95,6 +95,13 @@ Users simply connect to the ESP8266 Wi-Fi hotspot and open the dashboard from an
 
 ---
 
+## 💻 Tinkercard Link and Diagram
+<img width="1087" height="579" alt="Screenshot 2026-07-22 at 2 36 39 PM" src="https://github.com/user-attachments/assets/ed5a2894-9013-4032-87cc-46bbeb2e3f2a" />
+
+
+https://www.tinkercad.com/things/fziEMWhqlJY-spectacular-bigery-curcan/editel?returnTo=%2Fdashboard%2Fdesigns%2Fcircuits&sharecode=tHxojxXXdFuXdVSgRR8aM75to8yJgy7KUygej-ZJJWU
+
+---
 ## 💻 Technologies Used
 
 * Arduino IDE (C/C++)
@@ -110,8 +117,5 @@ Users simply connect to the ESP8266 Wi-Fi hotspot and open the dashboard from an
 
 ## 📸 Project Demonstration
 
-
-
-Uploading WhatsApp Video 2026-07-06 at 11.12.37 (1).mp4…
 
 
