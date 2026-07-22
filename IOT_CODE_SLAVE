@@ -1,0 +1,295 @@
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+#include <stdint.h>
+
+// Pin Definitions
+#define GREEN_LED 3
+#define RED_LED 11
+#define PIEZO_BUZZER 9
+#define FAN_PIN 2
+#define PUSH_BUTTON 10
+#define POT_PIN A0
+#define LM35_PIN A1
+#define PROXIMITY_RED_LED 4
+#define TRIG_PIN 13
+#define ECHO_PIN 12
+
+// Target Indicator Pins
+#define ULTRASONIC_RED_LED 6
+#define TEMP_RED_LED 7
+
+#define SLAVE_ADDRESS 0x08
+
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+
+// Must match Wemos struct exactly
+struct __attribute__((packed)) PackagedData {
+  float currentTemp;
+  float potVoltage;
+  int16_t distanceCm;
+  uint8_t isAlertState;
+};
+
+PackagedData myData;
+
+// Temperature values
+float roomTemperature = 0.0;
+const float TEMP_DEVIATION = 5.0;
+
+unsigned long tempLEDTriggerMillis = 0;
+bool isTempLEDActive = false;
+bool hasTriggeredThisDeviation = false;
+
+const float RESET_THRESHOLD_VOLTAGE = 4.0;
+const int PROXIMITY_THRESHOLD_CM = 5;
+
+// This is the ONLY variable allowed to control the fan
+volatile bool webFanState = false;
+
+void setup() {
+  Serial.begin(9600);
+
+  pinMode(GREEN_LED, OUTPUT);
+  pinMode(RED_LED, OUTPUT);
+  pinMode(PROXIMITY_RED_LED, OUTPUT);
+  pinMode(PIEZO_BUZZER, OUTPUT);
+  pinMode(FAN_PIN, OUTPUT);
+  pinMode(PUSH_BUTTON, INPUT);
+  pinMode(TRIG_PIN, OUTPUT);
+  pinMode(ECHO_PIN, INPUT);
+
+  pinMode(ULTRASONIC_RED_LED, OUTPUT);
+  pinMode(TEMP_RED_LED, OUTPUT);
+
+  // Make sure fan is OFF at startup
+  webFanState = false;
+  digitalWrite(FAN_PIN, LOW);
+
+  lcd.init();
+  lcd.backlight();
+  lcd.clear();
+
+  // Join I2C bus as slave
+  Wire.begin(SLAVE_ADDRESS);
+  Wire.onRequest(requestEvent);
+  Wire.onReceive(receiveEvent);
+
+  // Reset outputs
+  noTone(PIEZO_BUZZER);
+  digitalWrite(RED_LED, LOW);
+  digitalWrite(PROXIMITY_RED_LED, LOW);
+  digitalWrite(ULTRASONIC_RED_LED, LOW);
+  digitalWrite(TEMP_RED_LED, LOW);
+  digitalWrite(GREEN_LED, HIGH);
+
+  myData.isAlertState = 0;
+  myData.currentTemp = 0.0;
+  myData.potVoltage = 0.0;
+  myData.distanceCm = 0;
+
+  // 3-second temperature calibration
+  lcd.setCursor(0, 0);
+  lcd.print("Calibrating...");
+  Serial.println("Starting 3-second room temperature calibration...");
+
+  unsigned long calibrationStart = millis();
+  float tempSum = 0.0;
+  unsigned long sampleCount = 0;
+
+  while (millis() - calibrationStart < 3000) {
+    int rawSample = analogRead(LM35_PIN);
+    float calculatedSample = rawSample * 0.48828125;
+
+    tempSum += calculatedSample;
+    sampleCount++;
+
+    digitalWrite(TEMP_RED_LED, (millis() / 100) % 2);
+    delay(20);
+  }
+
+  digitalWrite(TEMP_RED_LED, LOW);
+
+  if (sampleCount > 0) {
+    roomTemperature = tempSum / sampleCount;
+  } else {
+    roomTemperature = 27.0;
+  }
+
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Room Baseline:");
+  lcd.setCursor(0, 1);
+  lcd.print(roomTemperature, 1);
+  lcd.print((char)223);
+  lcd.print("C Saved!");
+
+  Serial.print("Calibration Complete. Baseline: ");
+  Serial.println(roomTemperature, 1);
+
+  delay(2000);
+  lcd.clear();
+}
+
+void loop() {
+  unsigned long currentMillis = millis();
+
+  // 1. Sensor readings
+  int potRaw = analogRead(POT_PIN);
+  myData.potVoltage = potRaw * (5.0 / 1023.0);
+
+  int buttonState = digitalRead(PUSH_BUTTON);
+
+  int tempRaw = analogRead(LM35_PIN);
+  myData.currentTemp = tempRaw * 0.48828125;
+
+  digitalWrite(TRIG_PIN, LOW);
+  delayMicroseconds(2);
+  digitalWrite(TRIG_PIN, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG_PIN, LOW);
+
+  long duration = pulseIn(ECHO_PIN, HIGH, 30000);
+
+  if (duration == 0) {
+    myData.distanceCm = 0;
+  } else {
+    myData.distanceCm = (int16_t)(duration * 0.0343 / 2);
+  }
+
+  // 2. Ultrasonic proximity logic
+  // This only controls LED indicators, NOT the fan.
+  if (myData.distanceCm <= PROXIMITY_THRESHOLD_CM && myData.distanceCm > 0) {
+    digitalWrite(PROXIMITY_RED_LED, HIGH);
+    digitalWrite(ULTRASONIC_RED_LED, HIGH);
+  } else {
+    digitalWrite(PROXIMITY_RED_LED, LOW);
+    digitalWrite(ULTRASONIC_RED_LED, LOW);
+  }
+
+  // 3. Fan control
+  // The fan/motor is controlled ONLY by the webpage command.
+  if (webFanState == true) {
+    digitalWrite(FAN_PIN, HIGH);
+  } else {
+    digitalWrite(FAN_PIN, LOW);
+  }
+
+  // 4. System state machine
+  if (!myData.isAlertState) {
+    digitalWrite(GREEN_LED, HIGH);
+    digitalWrite(RED_LED, LOW);
+    noTone(PIEZO_BUZZER);
+
+    bool isCurrentlyOutofBounds = (abs(myData.currentTemp - roomTemperature) >= TEMP_DEVIATION);
+
+    if (isCurrentlyOutofBounds && !isTempLEDActive && !hasTriggeredThisDeviation) {
+      isTempLEDActive = true;
+      hasTriggeredThisDeviation = true;
+      tempLEDTriggerMillis = currentMillis;
+      digitalWrite(TEMP_RED_LED, HIGH);
+    }
+
+    if (isTempLEDActive) {
+      if (currentMillis - tempLEDTriggerMillis >= 3000) {
+        isTempLEDActive = false;
+        digitalWrite(TEMP_RED_LED, LOW);
+      }
+    }
+
+    if (!isCurrentlyOutofBounds) {
+      hasTriggeredThisDeviation = false;
+
+      if (!isTempLEDActive) {
+        digitalWrite(TEMP_RED_LED, LOW);
+      }
+    }
+
+    if (!isTempLEDActive && isCurrentlyOutofBounds && hasTriggeredThisDeviation) {
+      hasTriggeredThisDeviation = false;
+    }
+
+    if (buttonState == HIGH) {
+      myData.isAlertState = 1;
+      isTempLEDActive = false;
+      digitalWrite(TEMP_RED_LED, LOW);
+      lcd.clear();
+      delay(300);
+    }
+  } else {
+    digitalWrite(GREEN_LED, LOW);
+    digitalWrite(RED_LED, HIGH);
+    tone(PIEZO_BUZZER, 1000);
+    digitalWrite(TEMP_RED_LED, LOW);
+    isTempLEDActive = false;
+
+    if (myData.potVoltage >= RESET_THRESHOLD_VOLTAGE) {
+      myData.isAlertState = 0;
+      noTone(PIEZO_BUZZER);
+      lcd.clear();
+      delay(300);
+    }
+  }
+
+  // 5. LCD Display
+  lcd.setCursor(0, 0);
+
+  if (myData.isAlertState) {
+    lcd.print("S:ALERT ");
+  } else {
+    lcd.print("S:SECURE");
+  }
+
+  lcd.print(" D:");
+
+  if (myData.distanceCm > 0 && myData.distanceCm < 200) {
+    lcd.print(myData.distanceCm);
+    lcd.print("cm ");
+  } else {
+    lcd.print("--- ");
+  }
+
+  lcd.setCursor(0, 1);
+  lcd.print("T:");
+  lcd.print(myData.currentTemp, 1);
+  lcd.print((char)223);
+  lcd.print("C P:");
+  lcd.print(myData.potVoltage, 1);
+  lcd.print("V ");
+
+  delay(30);
+}
+
+// Send data to Wemos
+void requestEvent() {
+  Wire.write((uint8_t*)&myData, sizeof(myData));
+}
+
+// Receive webpage commands from Wemos
+void receiveEvent(int howMany) {
+  if (Wire.available() > 0) {
+    uint8_t commandByte = Wire.read();
+
+    switch (commandByte) {
+      case 0x01:
+        // Fan ON from webpage only
+        webFanState = true;
+        break;
+
+      case 0x02:
+        // Fan OFF from webpage only
+        webFanState = false;
+        break;
+
+      case 0x03:
+        // Force alarm ON
+        myData.isAlertState = 1;
+        break;
+
+      case 0x04:
+        // Force alarm OFF
+        myData.isAlertState = 0;
+        noTone(PIEZO_BUZZER);
+        break;
+    }
+  }
+}
