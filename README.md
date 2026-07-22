@@ -109,3 +109,9 @@ Users simply connect to the ESP8266 Wi-Fi hotspot and open the dashboard from an
 ---
 
 ## 📸 Project Demonstration
+
+
+
+Uploading WhatsApp Video 2026-07-06 at 11.12.37 (1).mp4…
+
+
