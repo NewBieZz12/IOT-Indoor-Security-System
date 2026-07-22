@@ -117,5 +117,13 @@ https://www.tinkercad.com/things/fziEMWhqlJY-spectacular-bigery-curcan/editel?re
 
 ## 📸 Project Demonstration
 
+PART1
+https://github.com/user-attachments/assets/34e755bd-2732-44dd-ac96-3062b561152a
+
+PART2
+https://github.com/user-attachments/assets/897f2983-d1d9-499f-b61b-7e154832e6d1
+
+
+
 
 
